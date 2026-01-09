@@ -1,124 +1,143 @@
-import requests
-import time
-import socket
+from fastapi import FastAPI, HTTPException
 from datetime import datetime
+from pydantic import BaseModel
+from typing import Optional, Dict, Any
+import logging
 
-class WorkerConnector:
-    def __init__(self):
-        self.cloud_url = "https://luz-assistant.onrender.com"
-        self.local_url = "http://localhost:5000"  # app.py usa 5000
-        self.worker_id = None
-        
-    def register_worker(self):
-        """Registrar tu PC en la nube"""
-        try:
-            print("🔄 Registrando worker...")
-            
-            # Obtener IP local
-            local_ip = self._get_local_ip()
-            worker_url = f"http://{local_ip}:5000"
-            
-            response = requests.post(
-                f"{self.cloud_url}/api/worker/register",
-                json={
-                    "worker_url": worker_url,
-                    "worker_name": f"PC-{socket.gethostname()}",
-                    "auth_token": "luz123"
-                },
-                timeout=10
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                self.worker_id = data.get('worker_id')
-                print(f"✅ Worker registrado: {self.worker_id}")
-                print(f"🔗 Worker URL: {worker_url}")
-                print(f"☁️  Cloud URL: {self.cloud_url}")
-                return True
-            else:
-                print(f"❌ Error: {response.status_code}")
-                print(f"📄 Respuesta: {response.text}")
-                return False
-                
-        except Exception as e:
-            print(f"❌ Error: {e}")
-            return False
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = FastAPI()
+
+# ================= MODELOS =================
+class WorkerRegistration(BaseModel):
+    worker_url: str
+    worker_name: str = "Luz-AI-Worker"
+    auth_token: Optional[str] = None
+
+class ChatRequest(BaseModel):
+    message: str
+    conversation_id: Optional[str] = None
+    user_id: Optional[str] = None
+
+# ================= ALMACENAMIENTO =================
+workers_db = {}
+worker_counter = 0
+
+# ================= ENDPOINTS =================
+@app.get("/")
+async def root():
+    return {
+        "service": "Luz Assistant Cloud Gateway",
+        "status": "online",
+        "version": "1.0.0",
+        "workers_registered": len(workers_db),
+        "endpoints": {
+            "chat": "POST /api/chat",
+            "register_worker": "POST /api/worker/register",
+            "health": "GET /health",
+            "workers": "GET /api/workers"
+        },
+        "timestamp": datetime.now().isoformat()
+    }
+
+@app.get("/health")
+async def health():
+    return {
+        "status": "healthy",
+        "workers": len(workers_db),
+        "timestamp": datetime.now().isoformat(),
+        "environment": "production"
+    }
+
+# 🔥 ENDPOINT CRÍTICO: Para que tu PC se registre
+@app.post("/api/worker/register")
+async def register_worker(worker: WorkerRegistration):
+    """Endpoint para registrar tu PC como worker"""
+    global worker_counter
     
-    def _get_local_ip(self):
-        """Obtener IP local"""
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            ip = s.getsockname()[0]
-            s.close()
-            return ip
-        except:
-            return "localhost"
+    # Token simple de autenticación
+    if worker.auth_token != "luz123":
+        raise HTTPException(status_code=401, detail="Token inválido")
     
-    def start(self):
-        """Iniciar conexión"""
-        print("\n" + "="*50)
-        print("🚀 LUZ ASSISTANT WORKER CONNECTOR")
-        print("="*50)
+    worker_counter += 1
+    worker_id = f"worker_{worker_counter}"
+    
+    workers_db[worker_id] = {
+        "id": worker_id,
+        "url": worker.worker_url,
+        "name": worker.worker_name,
+        "registered_at": datetime.now().isoformat(),
+        "last_seen": datetime.now().isoformat()
+    }
+    
+    logger.info(f"Worker registrado: {worker.worker_name}")
+    
+    return {
+        "status": "success",
+        "message": "Worker registrado exitosamente",
+        "worker_id": worker_id,
+        "gateway_url": "https://luz-assistant.onrender.com",
+        "heartbeat_endpoint": f"/api/worker/heartbeat/{worker_id}",
+        "registered_workers": len(workers_db)
+    }
+
+@app.get("/api/workers")
+async def list_workers():
+    """Listar todos los workers registrados"""
+    return {
+        "count": len(workers_db),
+        "workers": workers_db
+    }
+
+@app.post("/api/worker/heartbeat/{worker_id}")
+async def worker_heartbeat(worker_id: str):
+    """Worker envía latido para mantenerse activo"""
+    if worker_id in workers_db:
+        workers_db[worker_id]["last_seen"] = datetime.now().isoformat()
+        return {"status": "alive", "worker_id": worker_id}
+    else:
+        raise HTTPException(status_code=404, detail="Worker no encontrado")
+
+# 🔥 ENDPOINT PARA ANDROID: Chat
+@app.post("/api/chat")
+async def chat(request: ChatRequest):
+    """Endpoint principal de chat para Android"""
+    
+    # Si hay workers registrados, usar el primero
+    if workers_db:
+        first_worker = next(iter(workers_db.values()))
+        worker_url = first_worker["url"]
         
-        print("\n📋 PRERREQUISITOS:")
-        print("1. Tu app.py debe estar corriendo en otra ventana")
-        print("2. Debe escuchar en: http://localhost:5000")
-        print("3. Verifica con: curl http://localhost:5000/health")
-        
-        input("\n👉 Presiona Enter cuando app.py esté corriendo...")
-        
-        # Verificar que app.py esté corriendo
-        try:
-            response = requests.get("http://localhost:5000/health", timeout=5)
-            if response.status_code == 200:
-                print("✅ app.py local está funcionando")
-            else:
-                print("❌ app.py no responde correctamente")
-                return
-        except:
-            print("❌ app.py no está corriendo en puerto 5000")
-            return
-        
-        print("\n🔗 Conectando a la nube...")
-        if self.register_worker():
-            print("\n" + "="*50)
-            print("🎉 ¡CONEXIÓN EXITOSA!")
-            print("="*50)
-            print(f"📡 Cloud Gateway: {self.cloud_url}")
-            print(f"💻 Tu PC (Worker): http://localhost:5000")
-            print(f"🆔 Worker ID: {self.worker_id}")
-            print("\n📱 Los usuarios pueden usar la app Android con:")
-            print(f"   URL: {self.cloud_url}")
-            print("\n⏰ Manteniendo conexión activa...")
-            print("="*50)
-            
-            # Mantener conexión activa
-            counter = 0
-            while True:
-                time.sleep(30)  # Esperar 30 segundos
-                counter += 1
-                print(f"💓 Conectado ({counter}) - {datetime.now().strftime('%H:%M:%S')}")
-                
-                # Cada 5 minutos, re-registrar
-                if counter % 10 == 0:
-                    print("🔄 Re-registrando worker...")
-                    self.register_worker()
-                    
-        else:
-            print("\n❌ No se pudo conectar a la nube")
-            print("💡 Solución:")
-            print("1. Verifica tu conexión a internet")
-            print("2. Asegúrate que https://luz-assistant.onrender.com esté online")
-            print("3. Revisa los logs de Render.com")
+        return {
+            "response": f"Luz Assistant Cloud funcionando\n\nMensaje: {request.message}\n\nWorker: {first_worker['name']}",
+            "conversation_id": request.conversation_id or f"chat_{int(datetime.now().timestamp())}",
+            "timestamp": datetime.now().isoformat(),
+            "worker_available": True
+        }
+    else:
+        # Modo sin workers
+        return {
+            "response": f"Luz Assistant Cloud Gateway\n\nHas dicho: '{request.message}'\n\nServidor: https://luz-assistant.onrender.com\nStatus: Online\nWorkers: Esperando conexión...",
+            "conversation_id": request.conversation_id or f"cloud_{int(datetime.now().timestamp())}",
+            "timestamp": datetime.now().isoformat(),
+            "worker_available": False
+        }
+
+# Endpoint de prueba
+@app.get("/api/test/echo/{message}")
+async def test_echo(message: str):
+    """Endpoint de prueba"""
+    return {
+        "echo": message,
+        "server": "luz-assistant.onrender.com",
+        "timestamp": datetime.now().isoformat(),
+        "note": "Cloud Gateway funcionando"
+    }
 
 if __name__ == "__main__":
-    connector = WorkerConnector()
-    try:
-        connector.start()
-    except KeyboardInterrupt:
-        print("\n👋 Conexión terminada por usuario")
-    except Exception as e:
-        print(f"\n💥 Error crítico: {e}")
-
-
+    import uvicorn
+    
+    logger.info("Luz Assistant Cloud Gateway iniciando...")
+    
+    uvicorn.run(app, host="0.0.0.0", port=8000)
