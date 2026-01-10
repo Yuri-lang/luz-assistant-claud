@@ -55,14 +55,14 @@ async def health():
 async def register_worker(worker: WorkerRegistration):
     """Endpoint para registrar tu PC como worker"""
     global worker_counter
-    
+   
     # Token simple de autenticación
     if worker.auth_token != "luz123":
         raise HTTPException(status_code=401, detail="Token inválido")
-    
+   
     worker_counter += 1
     worker_id = f"worker_{worker_counter}"
-    
+   
     workers_db[worker_id] = {
         "id": worker_id,
         "url": worker.worker_url,
@@ -70,9 +70,9 @@ async def register_worker(worker: WorkerRegistration):
         "registered_at": datetime.now().isoformat(),
         "last_seen": datetime.now().isoformat()
     }
-    
+   
     logger.info(f"Worker registrado: {worker.worker_name}")
-    
+   
     return {
         "status": "success",
         "message": "Worker registrado exitosamente",
@@ -103,12 +103,12 @@ async def worker_heartbeat(worker_id: str):
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
     """Endpoint principal de chat para Android"""
-    
+   
     # Si hay workers registrados, usar el primero
     if workers_db:
         first_worker = next(iter(workers_db.values()))
         worker_url = first_worker["url"]
-        
+       
         return {
             "response": f"Luz Assistant Cloud funcionando\n\nMensaje: {request.message}\n\nWorker: {first_worker['name']}",
             "conversation_id": request.conversation_id or f"chat_{int(datetime.now().timestamp())}",
@@ -137,7 +137,8 @@ async def test_echo(message: str):
 
 if __name__ == "__main__":
     import uvicorn
-    
+   
     logger.info("Luz Assistant Cloud Gateway iniciando...")
-    
+   
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
